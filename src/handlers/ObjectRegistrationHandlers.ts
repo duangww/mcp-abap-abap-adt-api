@@ -1,7 +1,13 @@
+import type { CreatableTypeIds } from "abap-adt-api";
 import { stringify } from "../lib/results.js";
 import { McpError, ErrorCode } from "../lib/errors.js";
 import { BaseHandler } from "./BaseHandler.js";
 import type { ToolDefinition } from "../types/tools.js";
+
+function objectLanguage(): string {
+  const language = process.env.SAP_LANGUAGE?.trim();
+  return language ? language.toUpperCase() : "EN";
+}
 
 export class ObjectRegistrationHandlers extends BaseHandler {
   getTools(): ToolDefinition[] {
@@ -117,15 +123,18 @@ export class ObjectRegistrationHandlers extends BaseHandler {
   async handleCreateObject(args: any): Promise<any> {
     const startTime = performance.now();
     try {
-      const result = await this.adtclient.createObject(
-        args.objtype,
-        args.name,
-        args.parentName,
-        args.description,
-        args.parentPath,
-        args.responsible,
-        args.transport,
-      );
+      const language = objectLanguage();
+      const result = await this.adtclient.createObject({
+        objtype: args.objtype as CreatableTypeIds,
+        name: args.name,
+        parentName: args.parentName,
+        description: args.description,
+        parentPath: args.parentPath,
+        responsible: args.responsible,
+        transport: args.transport,
+        language,
+        masterLanguage: language,
+      });
       this.trackRequest(startTime, true);
       return {
         content: [

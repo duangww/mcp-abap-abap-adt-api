@@ -7,6 +7,8 @@ import {
   DebuggerScope,
   DebugBreakpoint,
   DebugSettings,
+  isDebuggee,
+  isDebugListenerError,
 } from "abap-adt-api";
 
 export class DebugHandlers extends BaseHandler {
@@ -342,6 +344,64 @@ export class DebugHandlers extends BaseHandler {
           required: ["variableName", "value"],
         },
       },
+      {
+        name: "debuggerListenAttachVariables",
+        description:
+          "Atomically listens for a breakpoint hit, attaches, then reads variables on the same stateful ADT session (Listen→Attach→Variables). Use after debuggerSetBreakpoints. Blocks until a hit occurs; trigger the ABAP program or class from another session while waiting.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            debuggingMode: {
+              type: "string",
+              description: 'The debugging mode (typically "user").',
+            },
+            terminalId: {
+              type: "string",
+              description: "The terminal ID (must match SetBreakpoints).",
+            },
+            ideId: {
+              type: "string",
+              description: "The IDE ID (must match SetBreakpoints).",
+            },
+            user: {
+              type: "string",
+              description: "The SAP user to listen for.",
+            },
+            parents: {
+              type: "array",
+              description:
+                "Variable names to read after attach (ABAP names, usually uppercase).",
+            },
+            checkConflict: {
+              type: "boolean",
+              description: "Whether to check for listener conflicts.",
+              optional: true,
+            },
+            isNotifiedOnConflict: {
+              type: "boolean",
+              description: "Whether to be notified on conflict.",
+              optional: true,
+            },
+            dynproDebugging: {
+              type: "boolean",
+              description: "Whether to enable Dynpro debugging on attach.",
+              optional: true,
+            },
+            childParents: {
+              type: "array",
+              description:
+                "Optional parent names for debuggerChildVariables after reading parents.",
+              optional: true,
+            },
+            continueAfter: {
+              type: "boolean",
+              description: "If true, call stepContinue after reading variables.",
+              optional: true,
+            },
+          },
+          required: ["debuggingMode", "terminalId", "ideId", "user", "parents"],
+        },
+      },
     ];
   }
 
@@ -373,6 +433,8 @@ export class DebugHandlers extends BaseHandler {
         return this.handleDebuggerGoToStack(args);
       case "debuggerSetVariableValue":
         return this.handleDebuggerSetVariableValue(args);
+      case "debuggerListenAttachVariables":
+        return this.handleDebuggerListenAttachVariables(args);
       default:
         throw new McpError(
           ErrorCode.MethodNotFound,
@@ -708,6 +770,91 @@ export class DebugHandlers extends BaseHandler {
     } catch (error: any) {
       this.trackRequest(startTime, false);
       throw error;
+    }
+  }
+
+  async handleDebuggerListenAttachVariables(args: any): Promise<any> {
+    const startTime = performance.now();
+    const parents = Array.isArray(args.parents) ? args.parents : [];
+    if (parents.length === 0) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        "parents must be a non-empty array of variable names",
+      );
+    }
+    try {
+      const hit = await this.adtclient.debuggerListen(
+        args.debuggingMode,
+        args.terminalId,
+        args.ideId,
+        args.user,
+        args.checkConflict,
+        args.isNotifiedOnConflict,
+      );
+      if (!hit) throw new Error("debuggerListen returned empty result");
+      if (isDebugListenerError(hit)) {
+        throw new Error(
+          hit.conflictText ||
+            hit.localizedMessage?.text ||
+            hit.message?.text ||
+            "debuggerListen conflict/error",
+        );
+      }
+      if (!isDebuggee(hit) || !hit.DEBUGGEE_ID) {
+        throw new Error("debuggerListen returned no DEBUGGEE_ID");
+      }
+      if (hit.IS_ATTACH_IMPOSSIBLE) {
+        throw new Error(
+          "Attach is impossible for this debuggee (IS_ATTACH_IMPOSSIBLE=true)",
+        );
+      }
+      const attach = await this.adtclient.debuggerAttach(
+        args.debuggingMode,
+        hit.DEBUGGEE_ID,
+        args.user,
+        args.dynproDebugging,
+      );
+      const variables = await this.adtclient.debuggerVariables(parents);
+      let childVariables: unknown;
+      if (Array.isArray(args.childParents) && args.childParents.length > 0) {
+        childVariables = await this.adtclient.debuggerChildVariables(
+          args.childParents,
+        );
+      }
+      let step: unknown;
+      let stepError: string | undefined;
+      if (args.continueAfter) {
+        try {
+          step = await this.adtclient.debuggerStep("stepContinue");
+        } catch (stepErr: any) {
+          stepError = stepErr?.message || String(stepErr);
+        }
+      }
+      this.trackRequest(startTime, true);
+      return {
+        content: [
+          {
+            type: "text",
+            text: stringify({
+              status: "success",
+              result: {
+                hit,
+                attach,
+                variables,
+                ...(childVariables !== undefined ? { childVariables } : {}),
+                ...(step !== undefined ? { step } : {}),
+                ...(stepError ? { stepError } : {}),
+              },
+            }),
+          },
+        ],
+      };
+    } catch (error: any) {
+      this.trackRequest(startTime, false);
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed Listen→Attach→Variables: ${error.message || "Unknown error"}`,
+      );
     }
   }
 }
