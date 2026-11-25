@@ -117,6 +117,55 @@ export async function fixture(timeout = 2000) {
         return;
       }
     }
+    if (path.startsWith("/sap/bc/adt/textelements/programs/zcor013")) {
+      const rel = path.slice("/sap/bc/adt/textelements/programs/zcor013".length);
+      const part = rel.replace(/^\//, "");
+      if (req.method === "GET" && part === "") {
+        res.setHeader("content-type", "application/xml");
+        res.end(
+          '<adtcore:objectReference xmlns:adtcore="http://www.sap.com/adt/core" adtcore:version="active"/>',
+        );
+        return;
+      }
+      if (
+        part === "source/symbols" ||
+        part === "source/selections" ||
+        part === "source/headings"
+      ) {
+        if (req.method === "GET") {
+          res.setHeader("etag", '"text-1"');
+          res.end(
+            part === "source/symbols"
+              ? "@MaxLength:14\r\nT01=选择条件\r\n"
+              : part === "source/selections"
+                ? "S_BUKRS =公司代码\r\n"
+                : "listHeader=\r\n",
+          );
+          return;
+        }
+        if (req.method === "PUT") {
+          res.statusCode = 204;
+          res.end();
+          return;
+        }
+      }
+      if (req.method === "POST") {
+        const action = new URL(req.url!, "http://fixture").searchParams.get(
+          "_action",
+        );
+        if (action === "LOCK") {
+          res.setHeader("content-type", "application/xml");
+          res.end(
+            '<?xml version="1.0" encoding="UTF-8"?><asx:abap xmlns:asx="http://www.sap.com/abapxml"><asx:values><DATA><LOCK_HANDLE>text-lock</LOCK_HANDLE><CORRNR></CORRNR><CORRUSER></CORRUSER><CORRTEXT></CORRTEXT><IS_LOCAL></IS_LOCAL><IS_LINK_UP></IS_LINK_UP><MODIFICATION_SUPPORT>true</MODIFICATION_SUPPORT></DATA></asx:values></asx:abap>',
+          );
+          return;
+        }
+        if (action === "UNLOCK") {
+          res.end("ok");
+          return;
+        }
+      }
+    }
     if (path === "/sap/bc/adt/activation") {
       res.end("");
       return;
@@ -155,8 +204,8 @@ export async function fixture(timeout = 2000) {
 test("handlers register with current SDK and missing config remains discoverable", async () => {
   const r = new Runtime({});
   const s = createServer(r);
-  assert.equal(r.tools.length, 129);
-  assert.equal(new Set(r.tools.map((t) => t.definition.name)).size, 129);
+  assert.equal(r.tools.length, 131);
+  assert.equal(new Set(r.tools.map((t) => t.definition.name)).size, 131);
   assert.equal(decode(await r.invoke("healthcheck", {})).sapConfigured, false);
   await assert.rejects(r.invoke("login", {}), /Configure SAP/);
   await r.close();
@@ -483,6 +532,51 @@ test("large source is omitted and file tools keep the text out of the tool resul
         objectUrl: "/sap/bc/adt/programs/programs/ztest",
       }),
       /absolute/,
+    );
+  } finally {
+    await f.close();
+  }
+});
+test("program texts are read with their content type and merged by name", async () => {
+  const f = await fixture();
+  try {
+    const read = decode(
+      await f.runtime.invoke("readProgramTexts", { program: "zcor013" }),
+    );
+    assert.equal(read.symbols[0].text, "选择条件");
+    assert.equal(read.selections[0].name, "S_BUKRS");
+    assert.match(f.requests.at(-1).headers.accept, /textelements.headings/);
+
+    const same = decode(
+      await f.runtime.invoke("writeProgramTexts", {
+        program: "ZCOR013",
+        selections: [{ name: "s_bukrs", text: "公司代码" }],
+        transport: "BKDK900000",
+      }),
+    );
+    assert.deepEqual(same.written, []);
+    assert.deepEqual(same.unchanged, ["selections"]);
+    assert.equal(same.activated, false);
+
+    const changed = decode(
+      await f.runtime.invoke("writeProgramTexts", {
+        program: "ZCOR013",
+        symbols: [{ name: "T01", text: "新的选择条件" }],
+        transport: "BKDK900000",
+      }),
+    );
+    assert.deepEqual(changed.written, ["symbols"]);
+    assert.equal(changed.activated, true);
+    const put = f.requests.find(
+      (r) => r.method === "PUT" && r.url.includes("source/symbols"),
+    );
+    assert.match(put.body, /T01=新的选择条件/);
+    assert.match(put.url, /corrNr=BKDK900000/);
+    assert.equal(put.headers["if-match"], '"text-1"');
+    assert.match(put.headers["content-type"], /textelements.symbols/);
+    await assert.rejects(
+      f.runtime.invoke("writeProgramTexts", { program: "9BAD" }),
+      /Program name/,
     );
   } finally {
     await f.close();

@@ -47,6 +47,19 @@ const position = {
   required: ["line", "column"],
   additionalProperties: false,
 };
+const textList = {
+  type: "array",
+  maxItems: 200,
+  items: {
+    type: "object",
+    properties: {
+      name: { type: "string", minLength: 1, maxLength: 31 },
+      text: { type: "string", maxLength: 255 },
+    },
+    required: ["name", "text"],
+    additionalProperties: false,
+  },
+};
 const overrides: Record<string, Record<string, any>> = {
   activateObjects: {
     objects: {
@@ -83,6 +96,11 @@ const overrides: Record<string, Record<string, any>> = {
       required: ["start", "end"],
       additionalProperties: false,
     },
+  },
+  writeProgramTexts: {
+    symbols: textList,
+    selections: textList,
+    headings: textList,
   },
   getObjectSource: {
     startLine: { type: "integer", minimum: 1, maximum: 10000000 },

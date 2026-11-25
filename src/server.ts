@@ -9,7 +9,7 @@ import { BoundedHttpClient, requestContext } from "./lib/http.js";
 import { ErrorCode, McpError, safeError } from "./lib/errors.js";
 import { toolSchema } from "./schema.js";
 const mutations = new Set(
-  `login logout dropSession createTransport setTransportsConfig createTransportsConfig transportDelete transportRelease transportSetOwner transportAddUser lock unLock setObjectSource uploadSourceFile deleteObject activateObjects activateByName createObject runClass createTestInclude setPrettyPrinterSetting gitCreateRepo gitPullRepo gitUnlinkRepo stageRepo pushRepo switchRepoBranch publishServiceBinding unPublishServiceBinding debuggerListen debuggerDeleteListener debuggerSetBreakpoints debuggerDeleteBreakpoints debuggerAttach debuggerSaveSettings debuggerStep debuggerGoToStack debuggerSetVariableValue debuggerListenAttachVariables renameExecute createAtcRun atcRequestExemption atcChangeContact tracesSetParameters tracesCreateConfiguration tracesDeleteConfiguration tracesDelete extractMethodExecute unitTestRun unitTestEvaluation`.split(
+  `login logout dropSession createTransport setTransportsConfig createTransportsConfig transportDelete transportRelease transportSetOwner transportAddUser lock unLock setObjectSource uploadSourceFile writeProgramTexts deleteObject activateObjects activateByName createObject runClass createTestInclude setPrettyPrinterSetting gitCreateRepo gitPullRepo gitUnlinkRepo stageRepo pushRepo switchRepoBranch publishServiceBinding unPublishServiceBinding debuggerListen debuggerDeleteListener debuggerSetBreakpoints debuggerDeleteBreakpoints debuggerAttach debuggerSaveSettings debuggerStep debuggerGoToStack debuggerSetVariableValue debuggerListenAttachVariables renameExecute createAtcRun atcRequestExemption atcChangeContact tracesSetParameters tracesCreateConfiguration tracesDeleteConfiguration tracesDelete extractMethodExecute unitTestRun unitTestEvaluation`.split(
     " ",
   ),
 );
@@ -123,7 +123,7 @@ export class Runtime {
         sapConfigured: !!this.client,
         sapConnectionVerified: false,
         sessionRecoveryRequired: this.recoveryRequired,
-        tools: 131,
+        tools: 133,
       });
     if (name === "readResultPage")
       return textResult(
