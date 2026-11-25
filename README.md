@@ -1,6 +1,43 @@
 # ABAP ADT API MCP server
 
-This server preserves 127 existing SAP ABAP tools and adds `readResultPage` for large results. Object CRUD, locking, activation, transports, queries, debugging, refactoring, Git and analysis share one SAP session owned by a trusted local stdio client. SAP authorizations determine what that session can read or change.
+This server preserves the upstream SAP ABAP tools and adds `readResultPage` for large results. Object CRUD, locking, activation, transports, queries, debugging, refactoring, Git and analysis share one SAP session owned by a trusted local stdio client. SAP authorizations determine what that session can read or change.
+
+## Tools added on this fork
+
+These tools exist on `https://github.com/duangww/mcp-abap-abap-adt-api`, branch `local`. They are not in the upstream package. `createObject` on this branch also writes `adtcore:language` and `adtcore:masterLanguage` from `SAP_LANGUAGE` (default `EN`).
+
+`getObjectSource` still returns short excerpts. A result longer than 12000 characters is omitted. Read and write large classes, programs, includes, interfaces, CDS, BDEF, SRVD and tables through files so the source text stays out of the chat.
+
+| Tool | Purpose |
+|---|---|
+| `downloadSourceFile` | Write an object's source to an absolute local path. Returns the path, byte size and line count, never the source text. Search that file locally. |
+| `uploadSourceFile` | Read an absolute local file and write it to SAP. Locks, writes, unlocks and runs a syntax check in one call. Set `activate` to true to activate only when `syntax.errorCount` is 0. `transport` is the transport request number, not the task number. |
+| `readProgramTexts` | Read selection texts, text symbols and list headings with the text-element content types. Do not use `getObjectSource` for these URLs; that call returns an HTML preview. |
+| `writeProgramTexts` | Merge selection texts, text symbols or headings by name. Only the names passed in are changed. Activates when something changed. `transport` is the request number. |
+| `debuggerListenAttachVariables` | On one stateful session: listen for a breakpoint, attach, then read variables. Call it after `debuggerSetBreakpoints`. It blocks until the breakpoint is hit from another session. |
+
+```text
+downloadSourceFile
+  filePath   = absolute local path
+  objectUrl  = object URL without /source/main
+
+uploadSourceFile
+  filePath   = absolute local path
+  objectUrl  = object URL without /source/main
+  transport  = request number
+  activate   = true only after a clean syntax check
+
+readProgramTexts
+  program = ZCOR013
+
+writeProgramTexts
+  program    = ZCOR013
+  selections = [{ name: "S_BUKRS", text: "公司代码" }]
+  symbols    = [{ name: "T01", text: "选择条件" }]
+  transport  = request number
+```
+
+`objectName` plus `objectKind` (`class`, `program`, `include`, `interface`, `ddls`, `bdef`, `srvd`, `table`) can replace `objectUrl` for the file tools.
 
 ## Installation and protocol
 
