@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { createServer as httpServer } from "node:http";
 import { once } from "node:events";
 import { Runtime, createServer } from "../src/server.js";
@@ -95,6 +98,29 @@ export async function fixture(timeout = 2000) {
       );
       return;
     }
+    if (
+      req.method === "POST" &&
+      path === "/sap/bc/adt/programs/programs/ztest"
+    ) {
+      const action = new URL(req.url!, "http://fixture").searchParams.get(
+        "_action",
+      );
+      if (action === "LOCK") {
+        res.setHeader("content-type", "application/xml");
+        res.end(
+          '<?xml version="1.0" encoding="UTF-8"?><asx:abap xmlns:asx="http://www.sap.com/abapxml"><asx:values><DATA><LOCK_HANDLE>lock-fixture</LOCK_HANDLE><CORRNR></CORRNR><CORRUSER></CORRUSER><CORRTEXT></CORRTEXT><IS_LOCAL></IS_LOCAL><IS_LINK_UP></IS_LINK_UP><MODIFICATION_SUPPORT>true</MODIFICATION_SUPPORT></DATA></asx:values></asx:abap>',
+        );
+        return;
+      }
+      if (action === "UNLOCK") {
+        res.end("ok");
+        return;
+      }
+    }
+    if (path === "/sap/bc/adt/activation") {
+      res.end("");
+      return;
+    }
     res.end("<ok/>");
   });
   server.listen(0, "127.0.0.1");
@@ -126,11 +152,11 @@ export async function fixture(timeout = 2000) {
     },
   };
 }
-test("all126 original handlers register with current SDK and missing config remains discoverable", async () => {
+test("handlers register with current SDK and missing config remains discoverable", async () => {
   const r = new Runtime({});
   const s = createServer(r);
-  assert.equal(r.tools.length, 126);
-  assert.equal(new Set(r.tools.map((t) => t.definition.name)).size, 126);
+  assert.equal(r.tools.length, 129);
+  assert.equal(new Set(r.tools.map((t) => t.definition.name)).size, 129);
   assert.equal(decode(await r.invoke("healthcheck", {})).sapConfigured, false);
   await assert.rejects(r.invoke("login", {}), /Configure SAP/);
   await r.close();
@@ -403,4 +429,62 @@ test("source cache is bounded, expires and keeps independent runtime snapshots; 
   let deep: any = {};
   for (let i = 0; i < 20; i++) deep = { next: deep };
   assert.throws(() => validateJson(deep), /limits/);
+});
+test("large source is omitted and file tools keep the text out of the tool result", async () => {
+  const f = await fixture();
+  const dir = await mkdtemp(path.join(tmpdir(), "abap-source-"));
+  const downloaded = path.join(dir, "ztest.prog.abap");
+  const uploaded = path.join(dir, "upload.prog.abap");
+  try {
+    f.setSource("MARKER".repeat(3000));
+    const omitted = decode(
+      await f.runtime.invoke("getObjectSource", { objectSourceUrl: url }),
+    );
+    assert.equal(omitted.omitted, true);
+    assert.equal("source" in omitted, false);
+    assert.doesNotMatch(JSON.stringify(omitted), /MARKER/);
+
+    f.setSource("REPORT ztest.\nWRITE 'file'.");
+    const saved = decode(
+      await f.runtime.invoke("downloadSourceFile", {
+        filePath: downloaded,
+        objectName: "ZTEST",
+        objectKind: "program",
+      }),
+    );
+    assert.equal(saved.filePath, downloaded);
+    assert.equal("source" in saved, false);
+    assert.equal(await readFile(downloaded, "utf8"), f.source());
+    assert.equal(saved.lines, 2);
+    assert.equal(saved.objectUrl, "/sap/bc/adt/programs/programs/ztest");
+
+    await writeFile(uploaded, "REPORT ztest.\r\nWRITE 'uploaded'.\r\n", "utf8");
+    const wrote = decode(
+      await f.runtime.invoke("uploadSourceFile", {
+        filePath: uploaded,
+        objectUrl: "/sap/bc/adt/programs/programs/ztest",
+        transport: "BKDK900000",
+        activate: true,
+      }),
+    );
+    assert.equal(wrote.written, true);
+    assert.equal(wrote.activated, true);
+    assert.equal(wrote.syntax.errorCount, 0);
+    assert.equal("source" in wrote, false);
+    assert.doesNotMatch(JSON.stringify(wrote), /uploaded/);
+    assert.equal(f.source(), "REPORT ztest.\nWRITE 'uploaded'.\n");
+    const put = f.requests.find(
+      (r) => r.method === "PUT" && r.url.includes("corrNr=BKDK900000"),
+    );
+    assert.ok(put);
+    await assert.rejects(
+      f.runtime.invoke("downloadSourceFile", {
+        filePath: "relative.abap",
+        objectUrl: "/sap/bc/adt/programs/programs/ztest",
+      }),
+      /absolute/,
+    );
+  } finally {
+    await f.close();
+  }
 });
