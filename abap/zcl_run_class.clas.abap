@@ -99,6 +99,13 @@ CLASS zcl_run_class DEFINITION
       IMPORTING io_server         TYPE REF TO cl_http_server
       RETURNING VALUE(rv_payload) TYPE string.
 
+    METHODS write_result
+      IMPORTING io_out            TYPE REF TO if_oo_adt_classrun_out
+                is_result         TYPE ty_run_result
+                iv_report         TYPE string OPTIONAL
+                iv_variant        TYPE string OPTIONAL
+                iv_max            TYPE i.
+
     METHODS analyze_program
       IMPORTING iv_report  TYPE program
       RETURNING VALUE(rv_message) TYPE string.
@@ -162,20 +169,16 @@ CLASS zcl_run_class IMPLEMENTATION.
 
 
   METHOD if_oo_adt_classrun~main.
-    DATA ls_req  TYPE ty_run_request.
-    DATA lr_part TYPE REF TO data.
-    DATA lv_max  TYPE i.
-    DATA lv_left TYPE i.
-    FIELD-SYMBOLS <part> TYPE ANY TABLE.
-    FIELD-SYMBOLS <row>  TYPE any.
+    DATA ls_req    TYPE ty_run_request.
+    DATA ls_result TYPE ty_run_result.
+    DATA lv_max    TYPE i.
 
     DATA(lv_payload) = load_payload( out ).
     IF lv_payload IS INITIAL.
-      IF mv_http_server = abap_true.
-        out->write( '输入为空。runClass 请传入 payload，例如 {"report":"ZCOR013","variant":"NONE_COST"}。' ).
-      ELSE.
-        out->write( '输入为空，当前请求里没有 HTTP 服务器对象。runClass 请传入 payload，例如 {"report":"ZCOR013","variant":"NONE_COST"}。' ).
-      ENDIF.
+      ls_result-message = '输入为空。runClass 的 payload 示例：{"report":"ZCOR013","variant":"NONE_COST"}。'.
+      write_result( io_out     = out
+                    is_result  = ls_result
+                    iv_max     = 0 ).
       RETURN.
     ENDIF.
 
@@ -190,48 +193,78 @@ CLASS zcl_run_class IMPLEMENTATION.
       lv_max = 500.
     ENDIF.
 
-    DATA(ls_result) = run_payload( lv_payload ).
-    out->write( ls_result-message ).
-    IF ls_result-data IS NOT BOUND.
-      RETURN.
-    ENDIF.
-
-    ASSIGN ls_result-data->* TO FIELD-SYMBOL(<lt_rows>).
-    IF sy-subrc <> 0.
-      RETURN.
-    ENDIF.
-    IF lines( <lt_rows> ) <= lv_max.
-      out->write( <lt_rows> ).
-      RETURN.
-    ENDIF.
-
-    CREATE DATA lr_part LIKE <lt_rows>.
-    ASSIGN lr_part->* TO <part>.
-    lv_left = lv_max.
-    LOOP AT <lt_rows> ASSIGNING <row>.
-      IF lv_left <= 0.
-        EXIT.
-      ENDIF.
-      INSERT <row> INTO TABLE <part>.
-      lv_left = lv_left - 1.
-    ENDLOOP.
-    out->write( <part> ).
-    out->write( |以上是前 { lv_max } 行，共 { lines( <lt_rows> ) } 行。| ).
+    ls_result = run_payload( lv_payload ).
+    write_result( io_out      = out
+                  is_result   = ls_result
+                  iv_report   = ls_req-report
+                  iv_variant  = ls_req-variant
+                  iv_max      = lv_max ).
   ENDMETHOD.
 
 
   METHOD load_payload.
     rv_payload = read_http_payload( ).
     IF rv_payload IS NOT INITIAL.
-      io_out->write( '已从 HTTP 请求读到运行参数。' ).
       RETURN.
     ENDIF.
 
     IMPORT req_json = rv_payload FROM MEMORY ID 'ZADT_RUN_REQ'.
     IF rv_payload IS NOT INITIAL.
       FREE MEMORY ID 'ZADT_RUN_REQ'.
-      io_out->write( '已从 ABAP MEMORY ID ZADT_RUN_REQ 读到请求。' ).
     ENDIF.
+  ENDMETHOD.
+
+
+  METHOD write_result.
+    DATA lr_part    TYPE REF TO data.
+    DATA lv_rows    TYPE string.
+    DATA lv_left    TYPE i.
+    DATA lv_shown   TYPE i.
+    DATA lv_limit   TYPE i.
+    FIELD-SYMBOLS <tab>  TYPE ANY TABLE.
+    FIELD-SYMBOLS <part> TYPE ANY TABLE.
+    FIELD-SYMBOLS <row>  TYPE any.
+
+    lv_limit = COND #( WHEN iv_max > 0 THEN iv_max ELSE 100 ).
+    IF is_result-data IS BOUND.
+      ASSIGN is_result-data->* TO <tab>.
+    ENDIF.
+    IF <tab> IS ASSIGNED.
+      IF lines( <tab> ) <= lv_limit.
+        lv_rows = /ui2/cl_json=>serialize(
+                    data        = <tab>
+                    compress    = abap_true
+                    pretty_name = /ui2/cl_json=>pretty_mode-low_case ).
+        lv_shown = lines( <tab> ).
+      ELSE.
+        CREATE DATA lr_part LIKE <tab>.
+        ASSIGN lr_part->* TO <part>.
+        lv_left = lv_limit.
+        LOOP AT <tab> ASSIGNING <row>.
+          IF lv_left <= 0.
+            EXIT.
+          ENDIF.
+          INSERT <row> INTO TABLE <part>.
+          lv_left = lv_left - 1.
+        ENDLOOP.
+        lv_rows = /ui2/cl_json=>serialize(
+                    data        = <part>
+                    compress    = abap_true
+                    pretty_name = /ui2/cl_json=>pretty_mode-low_case ).
+        lv_shown = lines( <part> ).
+      ENDIF.
+    ENDIF.
+    IF lv_rows IS INITIAL.
+      lv_rows = '[]'.
+    ENDIF.
+
+    io_out->write( |\{"success":{ COND string( WHEN is_result-success = abap_true THEN 'true' ELSE 'false' ) }| &&
+                   |,"report":{ /ui2/cl_json=>serialize( data = iv_report compress = abap_true ) }| &&
+                   |,"variant":{ /ui2/cl_json=>serialize( data = iv_variant compress = abap_true ) }| &&
+                   |,"message":{ /ui2/cl_json=>serialize( data = is_result-message compress = abap_true ) }| &&
+                   |,"lines":{ is_result-lines },"returned":{ lv_shown }| &&
+                   |,"truncated":{ COND string( WHEN is_result-lines > lv_shown THEN 'true' ELSE 'false' ) }| &&
+                   |,"rows":{ lv_rows }\}| ).
   ENDMETHOD.
 
 
