@@ -110,6 +110,26 @@ const overrides: Record<string, Record<string, any>> = {
   runQuery: { rowNumber: { type: "integer", minimum: 1, maximum: 1000 } },
   searchObject: { max: { type: "integer", minimum: 1, maximum: 1000 } },
   createAtcRun: { maxResults: { type: "integer", minimum: 1, maximum: 1000 } },
+  runReport: {
+    params: {
+      type: "array",
+      maxItems: 100,
+      items: {
+        type: "object",
+        properties: {
+          selname: { type: "string", minLength: 1, maxLength: 8 },
+          kind: { type: "string", maxLength: 1 },
+          sign: { type: "string", maxLength: 1 },
+          option: { type: "string", maxLength: 2 },
+          low: { type: "string", maxLength: 255 },
+          high: { type: "string", maxLength: 255 },
+        },
+        required: ["selname"],
+        additionalProperties: false,
+      },
+    },
+    max_rows: { type: "integer", minimum: 1, maximum: 500 },
+  },
 };
 function acceptsString(schema: any): boolean {
   return (

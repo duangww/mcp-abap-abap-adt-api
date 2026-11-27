@@ -2,7 +2,7 @@ import { stringify } from "../lib/results.js";
 import { McpError, ErrorCode } from "../lib/errors.js";
 import { BaseHandler } from "./BaseHandler.js";
 import type { ToolDefinition } from "../types/tools.js";
-import { ADTClient } from "abap-adt-api";
+import { parseClassRunResult, postClassRun } from "../lib/classRun.js";
 
 export class CodeAnalysisHandlers extends BaseHandler {
   getTools(): ToolDefinition[] {
@@ -109,7 +109,7 @@ export class CodeAnalysisHandlers extends BaseHandler {
       {
         name: "runClass",
         description:
-          'Runs an ABAP class that implements IF_OO_ADT_CLASSRUN. For a classic report, className is ZCL_RUN_CLASS and payload is JSON such as {"report":"ZCOR013","variant":"NONE_COST"} or {"report":"ZCOR013","params":[{"selname":"S_BUKRS","low":"1100"}]}. Variants are those of this MCP connection; use the QAS connection unless another system is requested. The result JSON has success, message, lines, returned, truncated and rows for checking the report output. Optional max_rows limits rows, default 100 and maximum 500.',
+          'Runs an ABAP class that implements IF_OO_ADT_CLASSRUN. For a classic report, className is ZCL_RUN_REPORT and payload is JSON such as {"report":"ZCOR013","variant":"NONE_COST"} or {"report":"ZCOR013","params":[{"selname":"S_BUKRS","low":"1100"}]}. Variants are those of this MCP connection; use the QAS connection unless another system is requested. The result JSON has success, message, lines, returned, truncated and rows for checking the report output. Optional max_rows limits rows, default 100 and maximum 500.',
         inputSchema: {
           type: "object",
           properties: {
@@ -118,7 +118,7 @@ export class CodeAnalysisHandlers extends BaseHandler {
               type: "string",
               optional: true,
               description:
-                'JSON passed to the class run. For ZCL_RUN_CLASS use {"report":"ZCOR013","variant":"NONE_COST"}. Optional max_rows limits console output, default 100, maximum 500.',
+                'JSON passed to the class run. For ZCL_RUN_REPORT use {"report":"ZCOR013","variant":"NONE_COST"}. Optional max_rows limits console output, default 100, maximum 500.',
             },
           },
           required: ["className"],
@@ -448,10 +448,9 @@ export class CodeAnalysisHandlers extends BaseHandler {
     const startTime = performance.now();
     try {
       const payload = typeof args.payload === "string" ? args.payload.trim() : "";
-      const raw = payload
-        ? await this.runClassWithPayload(String(args.className ?? ""), payload)
-        : await this.adtclient.runClass(args.className);
-      const result = this.classRunResult(String(raw ?? ""));
+      const result = payload
+        ? await postClassRun(this.adtclient, String(args.className ?? ""), payload)
+        : parseClassRunResult(String(await this.adtclient.runClass(args.className) ?? ""));
       this.trackRequest(startTime, true);
       return {
         content: [
@@ -468,50 +467,6 @@ export class CodeAnalysisHandlers extends BaseHandler {
       this.trackRequest(startTime, false);
       throw error;
     }
-  }
-
-  private async runClassWithPayload(className: string, payload: string) {
-    const name = className.trim().toUpperCase();
-    if (!name) {
-      throw new McpError(ErrorCode.InvalidParams, "className is required");
-    }
-    const headers: Record<string, string> = {
-      "Content-Type": "text/plain; charset=utf-8",
-    };
-    if (payload.length <= 2000 && !/[\r\n]/.test(payload)) {
-      headers["x-run-payload"] = payload;
-    }
-    const qs: Record<string, string> = {};
-    if (payload.length <= 1500) {
-      qs.payload = payload;
-    }
-    const response = await this.adtclient.httpClient.request(
-      `/sap/bc/adt/oo/classrun/${name}`,
-      { method: "POST", headers, qs, body: payload },
-    );
-    return "" + response.body;
-  }
-
-  private classRunResult(body: string) {
-    const text = body.trim();
-    const start = text.indexOf("{");
-    const end = text.lastIndexOf("}");
-    if (start < 0 || end <= start) return text;
-    try {
-      const value = JSON.parse(text.slice(start, end + 1));
-      if (
-        value &&
-        typeof value === "object" &&
-        !Array.isArray(value) &&
-        "success" in value &&
-        "rows" in value
-      ) {
-        return value;
-      }
-    } catch {
-      return text;
-    }
-    return text;
   }
 
   async handleCodeCompletionElement(args: any): Promise<any> {

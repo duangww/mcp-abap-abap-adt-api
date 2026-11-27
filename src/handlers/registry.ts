@@ -24,6 +24,7 @@ import { TraceHandlers } from "./TraceHandlers.js";
 import { RefactorHandlers } from "./RefactorHandlers.js";
 import { RevisionHandlers } from "./RevisionHandlers.js";
 import { ProgramTextHandlers } from "./ProgramTextHandlers.js";
+import { RunHandlers } from "./RunHandlers.js";
 import type { ADTClient } from "abap-adt-api";
 import { SourceCache } from "../lib/sourceCache.js";
 export function createHandlers(
@@ -57,5 +58,6 @@ export function createHandlers(
     new RefactorHandlers(client, cache),
     new RevisionHandlers(client, cache),
     new ProgramTextHandlers(client, cache),
+    new RunHandlers(client, cache),
   ];
 }
