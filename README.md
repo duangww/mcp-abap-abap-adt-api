@@ -15,6 +15,8 @@
 | `readProgramTexts` | 用文本元素自己的内容类型读取选择文本、文本符号和列表标题。不要用 `getObjectSource` 读这些地址，那个调用返回的是 HTML 预览。 |
 | `writeProgramTexts` | 按名称合并选择文本、文本符号或列表标题。只改传入的名称。有改动时激活。`transport` 填请求号。 |
 | `debuggerListenAttachVariables` | 在同一个有状态会话里听断点、附加调试器并读取变量。先调用 `debuggerSetBreakpoints`。本工具会阻塞，直到另一个会话命中断点。 |
+| `runReport` | 经 `ZCL_RUN_REPORT` 运行经典报表，返回 JSON 行供核对输出。变式属于当前 MCP 连接；未指定系统时用 QAS。`params` 覆盖变式中的同名字段。`max_rows` 默认 100，最大 500。 |
+| `runFunction` | 经 `ZCL_RUN_FUNCTION` 调用函数模块，把 exporting、changing、tables 作为 JSON 返回。优先传 `variant`：SAP GUI 中 SE37 测试数据目录的标题或编号。`importing`、`changing`、`tables` 按参数名补充或覆盖变式。以登录用户执行，可能修改数据。 |
 
 ```text
 downloadSourceFile
@@ -35,9 +37,25 @@ writeProgramTexts
   selections = [{ name: "S_BUKRS", text: "公司代码" }]
   symbols    = [{ name: "T01", text: "选择条件" }]
   transport  = 运输请求号
+
+runReport
+  report   = ZCOR013
+  variant  = NONE_COST
+  params   = [{ selname: "S_BUKRS", low: "1100" }]
+  max_rows = 100
+
+runFunction
+  functionName = ZRFC_ACCOUNTING_DOCUMENT
+  variant      = 测试数据目录中的标题或编号
+  importing    = { bukrs: "1100" }
+  tables       = { it_items: [ { } ] }
 ```
 
 文件工具也可以不传 `objectUrl`，改为同时传 `objectName` 和 `objectKind`。`objectKind` 取 `class`、`program`、`include`、`interface`、`ddls`、`bdef`、`srvd`、`table` 之一。
+
+`runReport` 的 `report` 必填。`params` 每项必填 `selname`（选择屏幕字段），`low` 和 `high` 是外部格式。未传 `kind` 时，字段名以 `S_` 开头按选择条件（`S`），否则按参数（`P`）。`sign` 默认 `I`，`option` 默认 `EQ`。返回 `success`、`report`、`variant`、`message`、`lines`、`returned`、`truncated` 和 `rows`。
+
+`runFunction` 的 `functionName` 必填。`importing`、`changing`、`tables` 是按参数名组织的对象，`tables` 的每个值是行数组。返回 `success`、`function`、`variant`、`message`、`exception`、`exporting`、`changing` 和 `tables`。
 
 ## 安装和协议
 
