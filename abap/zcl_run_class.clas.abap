@@ -44,9 +44,10 @@ CLASS zcl_run_class DEFINITION
 
   PRIVATE SECTION.
     TYPES: BEGIN OF ty_run_request,
-             report  TYPE string,
-             variant TYPE string,
-             params  TYPE tt_param_input,
+             report   TYPE string,
+             variant  TYPE string,
+             params   TYPE tt_param_input,
+             max_rows TYPE i,
            END OF ty_run_request.
 
     TYPES: BEGIN OF ty_seldef,
@@ -84,10 +85,18 @@ CLASS zcl_run_class DEFINITION
     DATA mt_stmt       TYPE STANDARD TABLE OF string WITH EMPTY KEY.
     DATA mv_loader     TYPE formname.
     DATA mt_data_forms TYPE STANDARD TABLE OF formname WITH EMPTY KEY.
-    DATA mt_outtabs    TYPE tt_outtab.
+    DATA mt_outtabs     TYPE tt_outtab.
+    DATA mv_http_server TYPE abap_bool.
 
     METHODS load_payload
       IMPORTING io_out            TYPE REF TO if_oo_adt_classrun_out
+      RETURNING VALUE(rv_payload) TYPE string.
+
+    METHODS read_http_payload
+      RETURNING VALUE(rv_payload) TYPE string.
+
+    METHODS payload_from_server
+      IMPORTING io_server         TYPE REF TO cl_http_server
       RETURNING VALUE(rv_payload) TYPE string.
 
     METHODS analyze_program
@@ -153,28 +162,195 @@ CLASS zcl_run_class IMPLEMENTATION.
 
 
   METHOD if_oo_adt_classrun~main.
+    DATA ls_req  TYPE ty_run_request.
+    DATA lr_part TYPE REF TO data.
+    DATA lv_max  TYPE i.
+    DATA lv_left TYPE i.
+    FIELD-SYMBOLS <part> TYPE ANY TABLE.
+    FIELD-SYMBOLS <row>  TYPE any.
+
     DATA(lv_payload) = load_payload( out ).
     IF lv_payload IS INITIAL.
-      out->write( '输入为空。请跑 ABAP Unit，或在同一会话把 JSON 写入 MEMORY ID ZADT_RUN_REQ。' ).
+      IF mv_http_server = abap_true.
+        out->write( '输入为空。runClass 请传入 payload，例如 {"report":"ZCOR013","variant":"NONE_COST"}。' ).
+      ELSE.
+        out->write( '输入为空，当前请求里没有 HTTP 服务器对象。runClass 请传入 payload，例如 {"report":"ZCOR013","variant":"NONE_COST"}。' ).
+      ENDIF.
       RETURN.
+    ENDIF.
+
+    TRY.
+        /ui2/cl_json=>deserialize( EXPORTING json = lv_payload
+                                   CHANGING  data = ls_req ).
+      CATCH cx_root.
+        CLEAR ls_req.
+    ENDTRY.
+    lv_max = COND #( WHEN ls_req-max_rows > 0 THEN ls_req-max_rows ELSE 100 ).
+    IF lv_max > 500.
+      lv_max = 500.
     ENDIF.
 
     DATA(ls_result) = run_payload( lv_payload ).
     out->write( ls_result-message ).
-    IF ls_result-data IS BOUND.
-      ASSIGN ls_result-data->* TO FIELD-SYMBOL(<lt_rows>).
-      IF sy-subrc = 0.
-        out->write( <lt_rows> ).
-      ENDIF.
+    IF ls_result-data IS NOT BOUND.
+      RETURN.
     ENDIF.
+
+    ASSIGN ls_result-data->* TO FIELD-SYMBOL(<lt_rows>).
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+    IF lines( <lt_rows> ) <= lv_max.
+      out->write( <lt_rows> ).
+      RETURN.
+    ENDIF.
+
+    CREATE DATA lr_part LIKE <lt_rows>.
+    ASSIGN lr_part->* TO <part>.
+    lv_left = lv_max.
+    LOOP AT <lt_rows> ASSIGNING <row>.
+      IF lv_left <= 0.
+        EXIT.
+      ENDIF.
+      INSERT <row> INTO TABLE <part>.
+      lv_left = lv_left - 1.
+    ENDLOOP.
+    out->write( <part> ).
+    out->write( |以上是前 { lv_max } 行，共 { lines( <lt_rows> ) } 行。| ).
   ENDMETHOD.
 
 
   METHOD load_payload.
+    rv_payload = read_http_payload( ).
+    IF rv_payload IS NOT INITIAL.
+      io_out->write( '已从 HTTP 请求读到运行参数。' ).
+      RETURN.
+    ENDIF.
+
     IMPORT req_json = rv_payload FROM MEMORY ID 'ZADT_RUN_REQ'.
     IF rv_payload IS NOT INITIAL.
       FREE MEMORY ID 'ZADT_RUN_REQ'.
       io_out->write( '已从 ABAP MEMORY ID ZADT_RUN_REQ 读到请求。' ).
+    ENDIF.
+  ENDMETHOD.
+
+
+  METHOD read_http_payload.
+    DATA lo_server TYPE REF TO cl_http_server.
+    DATA lo_desc   TYPE REF TO cl_abap_typedescr.
+    FIELD-SYMBOLS <server> TYPE any.
+    FIELD-SYMBOLS <tab>    TYPE ANY TABLE.
+    FIELD-SYMBOLS <line>   TYPE any.
+    FIELD-SYMBOLS <comp>   TYPE any.
+
+    ASSIGN ('(SAPLHTTP_RUNTIME)SERVER_ACCEPTED') TO <server>.
+    IF sy-subrc = 0.
+      TRY.
+          lo_server ?= <server>.
+        CATCH cx_sy_move_cast_error.
+          CLEAR lo_server.
+      ENDTRY.
+    ENDIF.
+    IF lo_server IS BOUND.
+      mv_http_server = abap_true.
+      rv_payload = payload_from_server( lo_server ).
+      IF rv_payload IS NOT INITIAL.
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+    ASSIGN ('(SAPLHTTP_RUNTIME)SERVER_INSTANCES') TO <server>.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+    mv_http_server = abap_true.
+    lo_desc = cl_abap_typedescr=>describe_by_data( <server> ).
+    IF lo_desc->kind <> cl_abap_typedescr=>kind_table.
+      RETURN.
+    ENDIF.
+    ASSIGN <server> TO <tab>.
+    LOOP AT <tab> ASSIGNING <line>.
+      CLEAR lo_server.
+      TRY.
+          lo_server ?= <line>.
+        CATCH cx_sy_move_cast_error.
+          IF cl_abap_typedescr=>describe_by_data( <line> )->kind <> cl_abap_typedescr=>kind_struct.
+            CONTINUE.
+          ENDIF.
+          ASSIGN COMPONENT 'SERVER' OF STRUCTURE <line> TO <comp>.
+          IF sy-subrc = 0.
+            TRY.
+                lo_server ?= <comp>.
+              CATCH cx_sy_move_cast_error.
+                CLEAR lo_server.
+            ENDTRY.
+          ENDIF.
+      ENDTRY.
+      rv_payload = payload_from_server( lo_server ).
+      IF rv_payload IS NOT INITIAL.
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+
+  METHOD payload_from_server.
+    DATA lv_query TYPE string.
+    DATA lv_value TYPE string.
+    DATA lv_rest  TYPE string.
+
+    IF io_server IS NOT BOUND.
+      RETURN.
+    ENDIF.
+
+    TRY.
+        lv_value = io_server->request->get_cdata( ).
+      CATCH cx_root.
+        CLEAR lv_value.
+    ENDTRY.
+    SHIFT lv_value LEFT DELETING LEADING space.
+    IF lv_value IS NOT INITIAL AND lv_value(1) = '{'.
+      rv_payload = lv_value.
+      RETURN.
+    ENDIF.
+
+    TRY.
+        lv_value = io_server->request->get_header_field( name = 'x-run-payload' ).
+      CATCH cx_root.
+        CLEAR lv_value.
+    ENDTRY.
+    SHIFT lv_value LEFT DELETING LEADING space.
+    IF lv_value IS NOT INITIAL AND lv_value(1) = '{'.
+      rv_payload = lv_value.
+      RETURN.
+    ENDIF.
+
+    TRY.
+        lv_value = io_server->request->get_uri_parameter( name = 'payload' ).
+      CATCH cx_root.
+        CLEAR lv_value.
+    ENDTRY.
+    SHIFT lv_value LEFT DELETING LEADING space.
+    IF lv_value IS NOT INITIAL AND lv_value(1) = '{'.
+      rv_payload = lv_value.
+      RETURN.
+    ENDIF.
+
+    TRY.
+        lv_query = io_server->request->get_header_field( name = '~query_string' ).
+      CATCH cx_root.
+        RETURN.
+    ENDTRY.
+    FIND 'payload=' IN lv_query.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+    lv_rest = substring_after( val = lv_query sub = 'payload=' ).
+    SPLIT lv_rest AT '&' INTO lv_rest lv_value.
+    rv_payload = cl_http_utility=>unescape_url( escaped = lv_rest ).
+    SHIFT rv_payload LEFT DELETING LEADING space.
+    IF rv_payload IS INITIAL OR rv_payload(1) <> '{'.
+      CLEAR rv_payload.
     ENDIF.
   ENDMETHOD.
 

@@ -108,11 +108,18 @@ export class CodeAnalysisHandlers extends BaseHandler {
       },
       {
         name: "runClass",
-        description: "Runs a class.",
+        description:
+          'Runs an ABAP class that implements IF_OO_ADT_CLASSRUN. Optional payload is the JSON request body, for example {"report":"ZCOR013","variant":"NONE_COST"}. ZCL_RUN_CLASS reads it from the same HTTP request.',
         inputSchema: {
           type: "object",
           properties: {
             className: { type: "string" },
+            payload: {
+              type: "string",
+              optional: true,
+              description:
+                'JSON passed to the class run. For ZCL_RUN_CLASS use {"report":"ZCOR013","variant":"NONE_COST"}. Optional max_rows limits console output, default 100, maximum 500.',
+            },
           },
           required: ["className"],
         },
@@ -440,7 +447,10 @@ export class CodeAnalysisHandlers extends BaseHandler {
   async handleRunClass(args: any): Promise<any> {
     const startTime = performance.now();
     try {
-      const result = await this.adtclient.runClass(args.className);
+      const payload = typeof args.payload === "string" ? args.payload.trim() : "";
+      const result = payload
+        ? await this.runClassWithPayload(String(args.className ?? ""), payload)
+        : await this.adtclient.runClass(args.className);
       this.trackRequest(startTime, true);
       return {
         content: [
@@ -457,6 +467,28 @@ export class CodeAnalysisHandlers extends BaseHandler {
       this.trackRequest(startTime, false);
       throw error;
     }
+  }
+
+  private async runClassWithPayload(className: string, payload: string) {
+    const name = className.trim().toUpperCase();
+    if (!name) {
+      throw new McpError(ErrorCode.InvalidParams, "className is required");
+    }
+    const headers: Record<string, string> = {
+      "Content-Type": "text/plain; charset=utf-8",
+    };
+    if (payload.length <= 2000 && !/[\r\n]/.test(payload)) {
+      headers["x-run-payload"] = payload;
+    }
+    const qs: Record<string, string> = {};
+    if (payload.length <= 1500) {
+      qs.payload = payload;
+    }
+    const response = await this.adtclient.httpClient.request(
+      `/sap/bc/adt/oo/classrun/${name}`,
+      { method: "POST", headers, qs, body: payload },
+    );
+    return "" + response.body;
   }
 
   async handleCodeCompletionElement(args: any): Promise<any> {
