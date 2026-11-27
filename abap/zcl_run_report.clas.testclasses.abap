@@ -4,7 +4,7 @@ CLASS ltcl_prepare DEFINITION FINAL
   RISK LEVEL HARMLESS.
 
   PRIVATE SECTION.
-    DATA mo_cut TYPE REF TO zcl_run_class.
+    DATA mo_cut TYPE REF TO zcl_run_report.
     METHODS setup.
     METHODS params_kind_and_alpha FOR TESTING.
     METHODS variant_name_is_upper FOR TESTING.
@@ -65,7 +65,7 @@ CLASS ltcl_prepare IMPLEMENTATION.
   METHOD variant_name_is_upper.
     DATA lv_report  TYPE program.
     DATA lv_variant TYPE variant.
-    DATA lt_input   TYPE zcl_run_class=>tt_param_input.
+    DATA lt_input   TYPE zcl_run_report=>tt_param_input.
     DATA lv_message TYPE string.
 
     DATA(lv_ok) = mo_cut->parse_payload(
@@ -119,7 +119,7 @@ CLASS ltcl_execute IMPLEMENTATION.
 
 
   METHOD assert_rows.
-    DATA(ls_result) = NEW zcl_run_class( )->run_payload( iv_payload ).
+    DATA(ls_result) = NEW zcl_run_report( )->run_payload( iv_payload ).
     cl_abap_unit_assert=>assert_true( act = ls_result-success msg = ls_result-message ).
     cl_abap_unit_assert=>assert_true(
       act = xsdbool( ls_result-lines > 0 )

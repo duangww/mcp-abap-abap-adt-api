@@ -1,4 +1,4 @@
-CLASS zcl_run_class DEFINITION
+CLASS zcl_run_report DEFINITION
   PUBLIC FINAL
   CREATE PUBLIC.
 
@@ -41,6 +41,9 @@ CLASS zcl_run_class DEFINITION
                 et_params  TYPE rsparams_tt
                 ev_message TYPE string
       RETURNING VALUE(rv_ok) TYPE abap_bool.
+
+    METHODS request_payload
+      RETURNING VALUE(rv_payload) TYPE string.
 
   PRIVATE SECTION.
     TYPES: BEGIN OF ty_run_request,
@@ -147,7 +150,7 @@ CLASS zcl_run_class DEFINITION
 ENDCLASS.
 
 
-CLASS zcl_run_class IMPLEMENTATION.
+CLASS zcl_run_report IMPLEMENTATION.
 
   METHOD run_payload.
     DATA lt_params  TYPE rsparams_tt.
@@ -165,6 +168,11 @@ CLASS zcl_run_class IMPLEMENTATION.
     ENDIF.
 
     rs_result = execute_report( lt_params ).
+  ENDMETHOD.
+
+
+  METHOD request_payload.
+    rv_payload = read_http_payload( ).
   ENDMETHOD.
 
 
